@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Juego 2 Jugadores</title>
+  <style>
+    body {
+      margin: 0;
+      background-color: #111;
+      color: white;
+      font-family: sans-serif;
+      display: flex;
+    }
+
+    #left-panel {
+      display: flex;
+      flex-direction: column;
+      padding: 10px;
+      width: 200px;
+    }
+
+    #game-area {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      flex-grow: 1;
+    }
+
+    #right-panel {
+      padding: 10px;
+      width: 200px;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-start;
+    }
+
+    canvas {
+      background: #000;
+      border: 2px solid #fff;
+      margin-top: 20px;
+    }
+
+    .scoreboard {
+      width: 800px;
+      display: flex;
+      justify-content: space-between;
+      margin-top: 10px;
+      font-size: 20px;
+    }
+
+    #game-over {
+      font-size: 30px;
+      color: yellow;
+      display: none;
+      margin-top: 10px;
+    }
+
+    button, input {
+      margin-top: 10px;
+      padding: 8px;
+      font-size: 14px;
+      cursor: pointer;
+    }
+
+    input {
+      width: 100%;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="left-panel">
+    <button onclick="copiarLink()">Copiar link online</button>
+    <input type="text" id="input-link" placeholder="Ingresar link online">
+    <button onclick="usarLink()">Unirse como jugador 2</button>
+  </div>
+
+  <div id="game-area">
+    <div class="scoreboard">
+      <div id="player1-score">Jugador 1: 0</div>
+      <div id="player2-score">Jugador 2: 0</div>
+    </div>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <div id="game-over"></div>
+    <button id="save-button">Guardar Progreso</button>
+  </div>
+
+  <div id="right-panel">
+    <button onclick="resetContadores()">Resetear contadores</button>
+  </div>
+
+  <script>
+    const canvas = document.getElementById("gameCanvas");
+    const ctx = canvas.getContext("2d");
+
+    const floorHeight = 550;
+    const secondFloorY = 400;
+    const playerWidth = 40;
+    const playerHeight = 40;
+    const gravity = 0.6;
+    const jumpPower = 18;
+
+    const player1 = { x: 50, y: floorHeight - playerHeight, width: playerWidth, height: playerHeight, color: "red", vx: 0, vy: 0, speed: 5, direction: 1 };
+    const player2 = { x: 700, y: floorHeight - playerHeight, width: playerWidth, height: playerHeight, color: "blue", vx: 0, vy: 0, speed: 5, direction: -1 };
+
+    let keys = {};
+    let bullets = [];
+    let player1Score = parseInt(localStorage.getItem("p1score")) || 0;
+    let player2Score = parseInt(localStorage.getItem("p2score")) || 0;
+    let gameOver = false;
+
+    let canShootP1 = true;
+    let canShootP2 = true;
+
+    function drawPlayer(p) {
+      ctx.fillStyle = p.color;
+      ctx.fillRect(p.x, p.y, p.width, p.height);
+      ctx.fillStyle = "white";
+      const gunX = p.direction === 1 ? p.x + p.width : p.x - 10;
+      ctx.fillRect(gunX, p.y + p.height / 2 - 3, 10, 6);
+    }
+
+    function drawFloors() {
+      ctx.fillStyle = "#444";
+      ctx.fillRect(0, floorHeight, canvas.width, 50);
+      ctx.fillRect(0, secondFloorY, 300, 10);
+      ctx.fillRect(500, secondFloorY, 300, 10);
+    }
+
+    function handlePlayerMovement(p) {
+      p.vy += gravity;
+      if ((p === player1 && keys["s"]) || (p === player2 && keys["ArrowDown"])) {
+        p.vy += gravity * 0.8;
+      }
+      p.y += p.vy;
+
+      const onSecondFloor = (p.x + p.width > 0 && p.x < 300) || (p.x > 500);
+      if (p.y + p.height >= secondFloorY && p.y + p.height <= secondFloorY + 10 && onSecondFloor && p.vy >= 0) {
+        p.y = secondFloorY - p.height;
+        p.vy = 0;
+      }
+
+      if (p.y + p.height >= floorHeight) {
+        p.y = floorHeight - p.height;
+        p.vy = 0;
+      }
+
+      if (p.x < 0) p.x = 0;
+      if (p.x + p.width > canvas.width) p.x = canvas.width - p.width;
+
+      p.direction = p === player1 ? (player1.x < player2.x ? 1 : -1) : (player2.x < player1.x ? 1 : -1);
+    }
+
+    function drawBullets() {
+      ctx.fillStyle = "yellow";
+      bullets.forEach((b, i) => {
+        b.x += b.vx;
+        ctx.fillRect(b.x, b.y, 10, 4);
+
+        if (b.x < 0 || b.x > canvas.width) bullets.splice(i, 1);
+
+        const target = b.from === 1 ? player2 : player1;
+        if (b.x < target.x + target.width && b.x + 10 > target.x &&
+            b.y < target.y + target.height && b.y + 4 > target.y) {
+          bullets.splice(i, 1);
+          if (b.from === 1) player1Score++;
+          else player2Score++;
+          endGame(b.from);
+        }
+
+        if ((b.y >= secondFloorY && b.y <= secondFloorY + 10 && ((b.x >= 0 && b.x <= 300) || (b.x >= 500 && b.x <= 800))) || b.y >= floorHeight) {
+          bullets.splice(i, 1);
+        }
+      });
+    }
+
+    function shoot(p, from) {
+      const x = p.direction === 1 ? p.x + p.width : p.x - 10;
+      bullets.push({ x, y: p.y + p.height / 2, vx: p.direction * 5, from });
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      drawFloors();
+      drawPlayer(player1);
+      drawPlayer(player2);
+      drawBullets();
+    }
+
+    function update() {
+      if (gameOver) return;
+
+      if (keys["a"]) player1.x -= player1.speed;
+      if (keys["d"]) player1.x += player1.speed;
+      if (keys["w"] && player1.vy === 0) player1.vy = -jumpPower;
+
+      if (keys["ArrowLeft"]) player2.x -= player2.speed;
+      if (keys["ArrowRight"]) player2.x += player2.speed;
+      if (keys["ArrowUp"] && player2.vy === 0) player2.vy = -jumpPower;
+
+      handlePlayerMovement(player1);
+      handlePlayerMovement(player2);
+      draw();
+
+      document.getElementById("player1-score").textContent = "Jugador 1: " + player1Score;
+      document.getElementById("player2-score").textContent = "Jugador 2: " + player2Score;
+
+      requestAnimationFrame(update);
+    }
+
+    function endGame(winner) {
+      gameOver = true;
+      document.getElementById("game-over").textContent = `¡Jugador ${winner} ganador! (Presiona R para reiniciar)`;
+      document.getElementById("game-over").style.display = "block";
+    }
+
+    function resetGame() {
+      player1.x = 50; player1.y = floorHeight - playerHeight; player1.vy = 0;
+      player2.x = 700; player2.y = floorHeight - playerHeight; player2.vy = 0;
+      bullets = [];
+      gameOver = false;
+      document.getElementById("game-over").style.display = "none";
+      update();
+    }
+
+    function resetContadores() {
+      player1Score = 0;
+      player2Score = 0;
+      localStorage.setItem("p1score", "0");
+      localStorage.setItem("p2score", "0");
+    }
+
+    function copiarLink() {
+      const url = `${location.origin}${location.pathname}?player=1`;
+      navigator.clipboard.writeText(url).then(() => alert("Link copiado: " + url));
+    }
+
+    function usarLink() {
+      const inputLink = document.getElementById("input-link").value;
+      if (inputLink.includes("?player=1")) {
+        alert("Unido como Jugador 2 (modo online simulado)");
+        // Aquí se puede implementar sincronización real si deseas
+      }
+    }
+
+    window.addEventListener("keydown", (e) => {
+      keys[e.key] = true;
+      if (e.key === "f" && canShootP1) {
+        shoot(player1, 1);
+        canShootP1 = false;
+        setTimeout(() => canShootP1 = true, 1500);
+      }
+      if (e.key === "k" && canShootP2) {
+        shoot(player2, 2);
+        canShootP2 = false;
+        setTimeout(() => canShootP2 = true, 1500);
+      }
+      if (e.key === "r" && gameOver) resetGame();
+    });
+
+    window.addEventListener("keyup", (e) => {
+      keys[e.key] = false;
+    });
+
+    document.getElementById("save-button").onclick = () => {
+      localStorage.setItem("p1score", player1Score);
+      localStorage.setItem("p2score", player2Score);
+      alert("Progreso guardado.");
+    };
+
+    update();
+  </script>
+</body>
+</html>
